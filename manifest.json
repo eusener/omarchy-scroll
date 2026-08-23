@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "eusener.scroll",
+  "name": "Scroll",
+  "version": "1.0.0",
+  "author": "Eusener Castilho",
+  "description": "Mouse and trackpad scroll speed, direction, and method",
+  "kinds": [
+    "panel"
+  ],
+  "entryPoints": {
+    "panel": "ScrollPanel.qml"
+  }
+}
