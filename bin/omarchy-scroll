@@ -156,8 +156,10 @@ is_enabled() {
 # marked line appended once.
 cmd_enable() {
   [[ -f $INPUT_LUA ]] || { echo "omarchy-scroll: $INPUT_LUA not found." >&2; return 1; }
-  # Make sure the required file exists first, or the require would fail.
-  [[ -f $SCROLL_LUA ]] || cmd_save || return 1
+  # Snapshot the current live values first: the require line makes Hyprland
+  # reload, and that reload must load what the user is seeing now, not a stale
+  # scroll.lua (and the file must exist, or the require would fail).
+  cmd_save || return 1
   is_enabled && return 0
   printf '\n%s\n%s\n' "$REQUIRE_COMMENT" "$REQUIRE_LINE" >>"$INPUT_LUA"
 }
