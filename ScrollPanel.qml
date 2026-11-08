@@ -11,8 +11,10 @@ import qs.Commons
 // values back out of `hyprctl getoption` on every open, so the panel can never
 // drift from the compositor. Dragging a slider previews through `omarchy-scroll
 // set` (a Lua hl.config() eval, since Omarchy's Lua parser rejects `hyprctl
-// keyword`); releasing it calls `save`, which writes ~/.config/hypr/scroll.lua
-// so the value survives a reload.
+// keyword`). Nothing is written to disk until the user explicitly opts in with
+// "Keep across reloads", which runs `enable` (one marked line appended to
+// input.lua). From then on, releasing a slider calls `save`, which rewrites the
+// plugin-owned ~/.config/hypr/scroll.lua so the value survives a reload.
 //
 // Layout, cursor model, and chrome follow the dev-gallery template: j/k walks
 // targets, h/l adjusts the focused slider, Enter activates, Esc closes.
@@ -72,6 +74,9 @@ Item {
   property int emulateDiscrete: 1
   property bool hasTouchpad: false
   property bool loaded: false
+  // True once input.lua requires scroll.lua, i.e. the user has consented to
+  // persistence. Until then changes are live-only and nothing touches disk.
+  property bool persisted: false
 
   // The backend ships inside the plugin so a git install is self-contained:
   // `omarchy plugin add` only clones the repo and moves it into place, it never
@@ -113,7 +118,7 @@ Item {
   }
 
   function persist() {
-    if (!helper) return
+    if (!helper || !persisted) return
     saveProc.running = true
   }
 
@@ -147,6 +152,7 @@ Item {
           root.scrollMethod = String(d.scrollMethod || "")
           root.emulateDiscrete = Number(d.emulateDiscrete)
           root.hasTouchpad = !!d.hasTouchpad
+          root.persisted = !!d.persisted
           root.loaded = true
           root.parsedOk = true
           root.errorText = ""
@@ -176,6 +182,23 @@ Item {
     }
   }
 
+  // Explicit consent: only ever started from the "Keep across reloads" button.
+  // `enable` writes scroll.lua from the current live values and appends the
+  // require line to input.lua.
+  Process {
+    id: enableProc
+    command: ["/bin/sh", "-c", "exec \"$0\" enable", root.helper]
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0) root.errorText = "Could not enable persistence (exit " + exitCode + ")."
+      root.reload()
+    }
+  }
+
+  function enablePersistence() {
+    if (!helper) return
+    enableProc.running = true
+  }
+
   Process {
     id: resetProc
     command: ["/bin/sh", "-c", "exec \"$0\" reset", root.helper]
@@ -194,10 +217,11 @@ Item {
   //
   // Same shape as the gallery/wifi/audio panels: one flat target list, so j/k
   // crosses section boundaries without special-casing.
-  property string focusSection: "mouse-speed"
+  property string focusSection: "persist"
 
   readonly property var visibleSections: {
-    var s = ["mouse-speed", "mouse-natural"]
+    var s = persisted ? [] : ["persist"]
+    s = s.concat(["mouse-speed", "mouse-natural"])
     if (hasTouchpad) s = s.concat(["pad-speed", "pad-natural"])
     return s.concat(["method", "discrete", "reset"])
   }
@@ -235,6 +259,7 @@ Item {
       case "pad-natural": togglePadNatural(); break
       case "method": methodDropdown.toggle(); break
       case "discrete": discreteDropdown.toggle(); break
+      case "persist": enablePersistence(); break
       case "reset": resetProc.running = true; break
     }
   }
@@ -316,7 +341,7 @@ Item {
                 font.bold: true
               }
               Text {
-                text: "Speed and direction for the mouse wheel and the trackpad. Changes apply as you drag and are saved to ~/.config/hypr/scroll.lua. j/k to walk · h/l to adjust · Enter to activate · Esc to close."
+                text: "Speed and direction for the mouse wheel and the trackpad. Changes apply as you drag." + (root.persisted ? " They are saved to ~/.config/hypr/scroll.lua." : "") + " j/k to walk · h/l to adjust · Enter to activate · Esc to close."
                 color: Qt.darker(root.foreground, 1.4)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -357,6 +382,56 @@ Item {
                   font.pixelSize: Style.font.caption
                   width: parent.width
                   wrapMode: Text.WordWrap
+                }
+              }
+            }
+
+            // ---- persistence consent -----------------------------------
+            BorderSurface {
+              width: parent.width
+              visible: root.loaded && !root.persisted
+              implicitHeight: consentCol.implicitHeight + Style.spacing.rowPaddingX * 2
+              color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.08)
+              radius: Style.cornerRadius
+              borderSpec: Border.flat(Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.40), 1)
+
+              Column {
+                id: consentCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Style.space(14)
+                anchors.rightMargin: Style.space(14)
+                spacing: Style.space(8)
+
+                Text {
+                  text: "Changes are live only"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                }
+                Text {
+                  text: "They are lost on the next Hyprland reload. To keep them, this panel will write ~/.config/hypr/scroll.lua and append one line, require(\"hypr.scroll\"), to your ~/.config/hypr/input.lua. Nothing is written until you choose to. Undo any time with: omarchy-scroll disable"
+                  color: Qt.darker(root.foreground, 1.3)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                }
+                Button {
+                  text: "Keep across reloads"
+                  iconText: "󰆓"
+                  bordered: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  hasCursor: root.focusSection === "persist"
+                  onHovered: function(h) { if (h) root.focusSection = "persist" }
+                  onClicked: {
+                    root.focusSection = "persist"
+                    root.enablePersistence()
+                  }
                 }
               }
             }
